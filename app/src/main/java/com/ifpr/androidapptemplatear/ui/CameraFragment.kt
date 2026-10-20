@@ -22,6 +22,7 @@ import io.github.sceneview.ar.node.PlacementMode
 import io.github.sceneview.math.Position
 import okio.IOException
 import java.io.File
+import android.media.MediaPlayer
 
 class CameraFragment : Fragment() {
 
@@ -32,6 +33,8 @@ class CameraFragment : Fragment() {
     private lateinit var sharedViewModel: SharedModelViewModel
 
     private val CAMERA_PERMISSION_CODE = 1001
+
+    private var mediaPlayer: MediaPlayer? = null
 
     private var currentModelFile: String = "neutrofilo.glb"
 
@@ -68,6 +71,9 @@ class CameraFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        mediaPlayer?.release()
+        mediaPlayer = null
+
         super.onDestroyView()
         _binding = null
     }
@@ -126,11 +132,19 @@ class CameraFragment : Fragment() {
 
         modelNode = ArModelNode(sceneView.engine, PlacementMode.INSTANT).apply {
             loadModelGlbAsync(
-                glbFileLocation = getFilePath(requireContext(),fileName),
-                centerOrigin = Position(0f,0f,1f),
+                glbFileLocation = getFilePath(requireContext(), fileName),
+                centerOrigin = Position(0f, 0f, 1f),
 
-            ) {
+                ) {
                 sceneView.planeRenderer.isVisible = true
+
+                // Tocar som quando o objetivo aparecer
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer.create(
+                    requireContext(),
+                    R.raw.objetivo
+                )
+                mediaPlayer?.start()
             }
             // Permitir interação com o modelo
             isEditable = true
