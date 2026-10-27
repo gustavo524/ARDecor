@@ -23,12 +23,22 @@ import io.github.sceneview.math.Position
 import okio.IOException
 import java.io.File
 import android.media.MediaPlayer
+import android.content.ContentValues
+import android.graphics.Bitmap
+import android.os.Build
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
+import android.provider.MediaStore
+import android.view.PixelCopy
 
 class CameraFragment : Fragment() {
 
     private lateinit var sceneView: ArSceneView
     private lateinit var modelNode: ArModelNode
     private lateinit var placeButton: ExtendedFloatingActionButton
+
+    private lateinit var photoButton: ExtendedFloatingActionButton
 
     private lateinit var sharedViewModel: SharedModelViewModel
 
@@ -39,6 +49,8 @@ class CameraFragment : Fragment() {
     private var currentModelFile: String = "neutrofilo.glb"
 
     private var _binding: FragmentCameraBinding? = null
+
+
 
     // This property is only valid between onCreateView and
     // onDestroyView.
@@ -66,6 +78,15 @@ class CameraFragment : Fragment() {
         placeButton.setOnClickListener {
             placeModel()
         }
+
+// BOTÃO DE TIRAR FOTO
+        photoButton = view.findViewById(R.id.photo)
+
+        photoButton.setOnClickListener {
+            tirarFoto()
+        }
+
+        return view
 
         return view
     }
@@ -168,5 +189,98 @@ class CameraFragment : Fragment() {
                 return "Arquivo não encontrado em assets nem em filesDir: $fileName"
             }
         }
+    }
+
+    private fun tirarFoto() {
+        val bitmap = Bitmap.createBitmap(
+            sceneView.width,
+            sceneView.height,
+            Bitmap.Config.ARGB_8888
+        )
+
+        PixelCopy.request(
+            sceneView,
+            bitmap,
+            { result ->
+
+                if (result == PixelCopy.SUCCESS) {
+
+                    val nomeArquivo = "AR_Decor_${System.currentTimeMillis()}.jpg"
+
+                    val contentValues = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, nomeArquivo)
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(
+                                MediaStore.Images.Media.RELATIVE_PATH,
+                                Environment.DIRECTORY_PICTURES + "/AR Decor"
+                            )
+                            put(
+                                MediaStore.Images.Media.IS_PENDING,
+                                1
+                            )
+                        }
+                    }
+
+                    val uri = requireContext().contentResolver.insert(
+                        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                        contentValues
+                    )
+
+                    if (uri != null) {
+
+                        requireContext().contentResolver.openOutputStream(uri)?.use { outputStream ->
+                            bitmap.compress(
+                                Bitmap.CompressFormat.JPEG,
+                                95,
+                                outputStream
+                            )
+                        }
+
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            contentValues.clear()
+                            contentValues.put(
+                                MediaStore.Images.Media.IS_PENDING,
+                                0
+                            )
+
+                            requireContext().contentResolver.update(
+                                uri,
+                                contentValues,
+                                null,
+                                null
+                            )
+                        }
+
+                        Toast.makeText(
+                            requireContext(),
+                            "Foto salva com sucesso!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+
+                    } else {
+
+                        Toast.makeText(
+                            requireContext(),
+                            "Não foi possível salvar a foto",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+
+                } else {
+
+                    Toast.makeText(
+                        requireContext(),
+                        "Erro ao tirar foto",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+
+                bitmap.recycle()
+
+            },
+            Handler(Looper.getMainLooper())
+        )
     }
 }
