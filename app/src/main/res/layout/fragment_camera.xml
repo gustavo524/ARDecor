@@ -10,10 +10,15 @@
 
     <io.github.sceneview.ar.ArSceneView
         android:id="@+id/sceneView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent" />
 
     <!-- Receberá o ArSceneView ou o SceneView criado pelo fragmento. -->
     <FrameLayout
         android:id="@+id/sceneContainer"
+
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintTop_toTopOf="parent"

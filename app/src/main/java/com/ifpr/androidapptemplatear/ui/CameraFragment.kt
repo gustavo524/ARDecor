@@ -1,19 +1,28 @@
 package com.ifpr.androidapptemplatear.ui
 
 import android.Manifest
+import android.content.ContentValues
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.Preview
@@ -42,15 +51,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
-import android.media.MediaPlayer
-import android.content.ContentValues
-import android.graphics.Bitmap
-import android.os.Build
-import android.os.Environment
-import android.os.Handler
-import android.os.Looper
-import android.provider.MediaStore
-import android.view.PixelCopy
 
 class CameraFragment : Fragment() {
 
@@ -71,6 +71,7 @@ class CameraFragment : Fragment() {
 
     private var container: FrameLayout? = null
     private var placeButton: ExtendedFloatingActionButton? = null
+    private var photoButton: ExtendedFloatingActionButton? = null
     private var statusText: TextView? = null
     private var overlay: View? = null
 
@@ -96,26 +97,10 @@ class CameraFragment : Fragment() {
     private var arTracking = false
     private var cameraStreaming = false
 
-    private var currentModelFile = "neutrofilo.glb"
-
-    private lateinit var photoButton: ExtendedFloatingActionButton
-
-    private lateinit var sharedViewModel: SharedModelViewModel
-
-
-    private val CAMERA_PERMISSION_CODE = 1001
-
-    private var mediaPlayer: MediaPlayer? = null
-
     private var currentModelFile: String = "neutrofilo.glb"
 
-    private var _binding: FragmentCameraBinding? = null
-
-
-
-    // This property is only valid between onCreateView and
-    // onDestroyView.
-    private val binding get() = _binding!!
+    private lateinit var sharedViewModel: SharedModelViewModel
+    private var mediaPlayer: MediaPlayer? = null
 
     private val permissionLauncher =
         registerForActivityResult(
@@ -130,79 +115,26 @@ class CameraFragment : Fragment() {
             }
         }
 
-
     override fun onCreateView(
         inflater: LayoutInflater,
-        parent: ViewGroup?,
+        container: ViewGroup?,
         savedInstanceState: Bundle?
-    ): View {
-
-        super.onCreate(savedInstanceState)
-        sharedViewModel = ViewModelProvider(requireActivity())[SharedModelViewModel::class.java]
-        sharedViewModel.selectedModel.observe(viewLifecycleOwner) { path ->
-            loadModel(path)
-        }
-
-        val view = inflater.inflate(R.layout.fragment_camera, container, false)
-
-        sceneView = view.findViewById<ArSceneView?>(R.id.sceneView).apply {
-            lightEstimationMode = Config.LightEstimationMode.DISABLED
-        }
-
-        placeButton = view.findViewById(R.id.place)
-
-        placeButton.setOnClickListener {
-            placeModel()
-        }
-
-// BOTÃO DE TIRAR FOTO
-        photoButton = view.findViewById(R.id.photo)
-
-        photoButton.setOnClickListener {
-            tirarFoto()
-        }
-
-        return view
-
-        return view
-    }
-
-    override fun onDestroyView() {
-        mediaPlayer?.release()
-        mediaPlayer = null
-
-        super.onDestroyView()
-        _binding = null
+    ): View? {
+        return inflater.inflate(R.layout.fragment_camera, container, false)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-
-        return inflater.inflate(
-            R.layout.fragment_camera,
-            parent,
-            false
-        )
-    }
-
-    override fun onViewCreated(
-        view: View,
-        savedInstanceState: Bundle?
-    ) {
-
         super.onViewCreated(view, savedInstanceState)
 
         container = view.findViewById(R.id.sceneContainer)
         placeButton = view.findViewById(R.id.place)
+        photoButton = view.findViewById(R.id.photo)
 
         createControls()
 
-        sharedViewModel =
-            ViewModelProvider(requireActivity())[
-                SharedModelViewModel::class.java
-            ]
+        sharedViewModel = ViewModelProvider(requireActivity())[SharedModelViewModel::class.java]
 
         val selectedModel = sharedViewModel.selectedModel.value
-
         if (!selectedModel.isNullOrBlank()) {
             currentModelFile = selectedModel
         } else {
@@ -219,14 +151,13 @@ class CameraFragment : Fragment() {
         placeButton?.setOnClickListener {
             when (mode) {
                 Mode.AR -> placeModel()
-
-                Mode.CAMERA,
-                Mode.STATIC -> {
-                    startPreview(useCamera = mode == Mode.CAMERA)
-                }
-
+                Mode.CAMERA, Mode.STATIC -> startPreview(useCamera = mode == Mode.CAMERA)
                 Mode.CHECKING -> Unit
             }
+        }
+
+        photoButton?.setOnClickListener {
+            tirarFoto()
         }
 
         checkAvailability()
@@ -276,21 +207,15 @@ class CameraFragment : Fragment() {
 
         parent.findViewById<View>(R.id.titleImage)?.bringToFront()
         placeButton?.bringToFront()
+        photoButton?.bringToFront()
     }
 
-    /**
-     * Identificação por características comuns de emuladores.
-     * Por escolha deste aplicativo, eles iniciam sem ARCore.
-     */
     private fun isEmulator(): Boolean {
         return Build.FINGERPRINT.startsWith("generic") ||
                 Build.FINGERPRINT.startsWith("unknown") ||
                 Build.MODEL.contains("google_sdk", ignoreCase = true) ||
                 Build.MODEL.contains("Emulator", ignoreCase = true) ||
-                Build.MODEL.contains(
-                    "Android SDK built for",
-                    ignoreCase = true
-                ) ||
+                Build.MODEL.contains("Android SDK built for", ignoreCase = true) ||
                 Build.PRODUCT.contains("sdk", ignoreCase = true) ||
                 Build.HARDWARE.contains("goldfish", ignoreCase = true) ||
                 Build.HARDWARE.contains("ranchu", ignoreCase = true)
@@ -299,7 +224,6 @@ class CameraFragment : Fragment() {
     private fun checkAvailability() {
         availabilityJob?.cancel()
 
-        // Não tenta iniciar ARCore no emulador.
         if (isEmulator()) {
             requestMode(useAr = false)
             return
@@ -311,43 +235,27 @@ class CameraFragment : Fragment() {
         availabilityJob = viewLifecycleOwner.lifecycleScope.launch {
             delay(AVAILABILITY_TIMEOUT_MS)
 
-            if (
-                !resolved &&
-                container != null &&
-                expected == generation
-            ) {
+            if (!resolved && container != null && expected == generation) {
                 resolved = true
                 requestMode(useAr = false)
             }
         }
 
         try {
-            ArCoreApk.getInstance()
-                .checkAvailabilityAsync(requireContext()) { availability ->
-                    activity?.runOnUiThread {
-                        if (
-                            !resolved &&
-                            container != null &&
-                            expected == generation
-                        ) {
-                            resolved = true
-                            availabilityJob?.cancel()
-                            availabilityJob = null
+            ArCoreApk.getInstance().checkAvailabilityAsync(requireContext()) { availability ->
+                activity?.runOnUiThread {
+                    if (!resolved && container != null && expected == generation) {
+                        resolved = true
+                        availabilityJob?.cancel()
+                        availabilityJob = null
 
-                            val installed =
-                                availability ==
-                                        ArCoreApk.Availability.SUPPORTED_INSTALLED
-
-                            requestMode(useAr = installed)
-                        }
+                        val installed = availability == ArCoreApk.Availability.SUPPORTED_INSTALLED
+                        requestMode(useAr = installed)
                     }
                 }
+            }
         } catch (_: Exception) {
-            if (
-                !resolved &&
-                container != null &&
-                expected == generation
-            ) {
+            if (!resolved && container != null && expected == generation) {
                 resolved = true
                 availabilityJob?.cancel()
                 availabilityJob = null
@@ -366,12 +274,8 @@ class CameraFragment : Fragment() {
         ) == PackageManager.PERMISSION_GRANTED
 
         when {
-            !permitted -> {
-                permissionLauncher.launch(Manifest.permission.CAMERA)
-            }
-
+            !permitted -> permissionLauncher.launch(Manifest.permission.CAMERA)
             useAr -> startAr()
-
             else -> startPreview(useCamera = true)
         }
     }
@@ -398,74 +302,47 @@ class CameraFragment : Fragment() {
             sceneView = ar
 
             ar.configureSession { _, config ->
-                config.planeFindingMode =
-                    Config.PlaneFindingMode.HORIZONTAL
-
-                config.lightEstimationMode =
-                    Config.LightEstimationMode.DISABLED
+                config.planeFindingMode = Config.PlaneFindingMode.HORIZONTAL
+                config.lightEstimationMode = Config.LightEstimationMode.DISABLED
             }
 
             ar.onSessionFailed = {
                 host.post {
-                    if (
-                        container != null &&
-                        expected == generation &&
-                        mode == Mode.AR
-                    ) {
+                    if (container != null && expected == generation && mode == Mode.AR) {
                         startPreview(useCamera = true)
                     }
                 }
             }
 
             ar.onSessionUpdated = { _, frame ->
-                if (
-                    expected == generation &&
-                    mode == Mode.AR
-                ) {
-                    arTracking =
-                        frame.camera.trackingState ==
-                                TrackingState.TRACKING
+                if (expected == generation && mode == Mode.AR) {
+                    arTracking = frame.camera.trackingState == TrackingState.TRACKING
 
                     if (anchorNode == null) {
-                        placementHit =
-                            if (
-                                arTracking &&
-                                ar.width > 0 &&
-                                ar.height > 0
-                            ) {
-                                frame.hitTest(
-                                    ar.width / 2f,
-                                    ar.height / 2f
-                                ).firstOrNull { hit ->
-                                    val plane = hit.trackable as? Plane
-
-                                    plane != null &&
-                                            plane.type ==
-                                            Plane.Type.HORIZONTAL_UPWARD_FACING &&
-                                            plane.isPoseInPolygon(hit.hitPose)
-                                }
-                            } else {
-                                null
+                        placementHit = if (arTracking && ar.width > 0 && ar.height > 0) {
+                            frame.hitTest(ar.width / 2f, ar.height / 2f).firstOrNull { hit ->
+                                val plane = hit.trackable as? Plane
+                                plane != null &&
+                                        plane.type == Plane.Type.HORIZONTAL_UPWARD_FACING &&
+                                        plane.isPoseInPolygon(hit.hitPose)
                             }
+                        } else {
+                            null
+                        }
 
-                        val ready =
-                            placementHit != null &&
-                                    modelNode != null
-
+                        val ready = placementHit != null && modelNode != null
                         placeButton?.isEnabled = ready
 
-                        statusText?.text =
-                            if (ready) {
-                                "Superfície encontrada. Toque em Posicionar."
-                            } else {
-                                "Mova o aparelho devagar sobre uma superfície."
-                            }
+                        statusText?.text = if (ready) {
+                            "Superfície encontrada. Toque em Posicionar."
+                        } else {
+                            "Mova o aparelho devagar sobre uma superfície."
+                        }
                     }
                 }
             }
 
             ar.lifecycle = viewLifecycleOwner.lifecycle
-
             host.addView(ar, fullSize())
 
             startArWatchdog(expected)
@@ -476,11 +353,6 @@ class CameraFragment : Fragment() {
         }
     }
 
-    /**
-     * Troca automaticamente quando o ARCore não consegue rastrear.
-     * Conta somente o tempo em que a tela está em primeiro plano.
-     * A ausência de uma superfície, sozinha, não provoca a troca.
-     */
     private fun startArWatchdog(expected: Int) {
         arWatchdogJob?.cancel()
 
@@ -491,11 +363,7 @@ class CameraFragment : Fragment() {
             while (isActive) {
                 delay(500L)
 
-                if (
-                    container == null ||
-                    expected != generation ||
-                    mode != Mode.AR
-                ) {
+                if (container == null || expected != generation || mode != Mode.AR) {
                     return@launch
                 }
 
@@ -503,8 +371,7 @@ class CameraFragment : Fragment() {
                 val elapsed = now - lastTime
                 lastTime = now
 
-                val resumed = viewLifecycleOwner.lifecycle
-                    .currentState.isAtLeast(Lifecycle.State.RESUMED)
+                val resumed = viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
 
                 if (!resumed || arTracking) {
                     withoutTrackingMs = 0L
@@ -524,7 +391,6 @@ class CameraFragment : Fragment() {
         val host = container ?: return
 
         clearScene()
-
         mode = if (useCamera) Mode.CAMERA else Mode.STATIC
 
         placeButton?.apply {
@@ -542,11 +408,8 @@ class CameraFragment : Fragment() {
 
         val cameraView = if (useCamera) {
             PreviewView(requireContext()).apply {
-                implementationMode =
-                    PreviewView.ImplementationMode.COMPATIBLE
-
+                implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 scaleType = PreviewView.ScaleType.FILL_CENTER
-
                 host.addView(this, fullSize())
             }
         } else {
@@ -564,7 +427,6 @@ class CameraFragment : Fragment() {
             scene.cameraNode.lookAt(Position(0f, 0f, 0f))
 
             sceneView = scene
-
             host.addView(scene, fullSize())
 
             loadModel()
@@ -583,18 +445,13 @@ class CameraFragment : Fragment() {
         val expected = generation
         val owner = viewLifecycleOwner
 
-        // O prazo também cobre a obtenção do CameraProvider.
         startCameraWatchdog(expected)
 
         try {
             val future = ProcessCameraProvider.getInstance(context)
 
             future.addListener({
-                if (
-                    container == null ||
-                    expected != generation ||
-                    mode != Mode.CAMERA
-                ) {
+                if (container == null || expected != generation || mode != Mode.CAMERA) {
                     return@addListener
                 }
 
@@ -602,14 +459,8 @@ class CameraFragment : Fragment() {
                     val provider = future.get()
 
                     val selector = when {
-                        provider.hasCamera(
-                            CameraSelector.DEFAULT_BACK_CAMERA
-                        ) -> CameraSelector.DEFAULT_BACK_CAMERA
-
-                        provider.hasCamera(
-                            CameraSelector.DEFAULT_FRONT_CAMERA
-                        ) -> CameraSelector.DEFAULT_FRONT_CAMERA
-
+                        provider.hasCamera(CameraSelector.DEFAULT_BACK_CAMERA) -> CameraSelector.DEFAULT_BACK_CAMERA
+                        provider.hasCamera(CameraSelector.DEFAULT_FRONT_CAMERA) -> CameraSelector.DEFAULT_FRONT_CAMERA
                         else -> {
                             startPreview(useCamera = false)
                             return@addListener
@@ -617,45 +468,28 @@ class CameraFragment : Fragment() {
                     }
 
                     val preview = Preview.Builder().build()
-
-                    preview.setSurfaceProvider(
-                        previewView.surfaceProvider
-                    )
+                    preview.setSurfaceProvider(previewView.surfaceProvider)
 
                     cameraProvider = provider
                     cameraPreview = preview
 
                     previewView.previewStreamState.observe(owner) { state ->
-                        if (
-                            expected == generation &&
-                            mode == Mode.CAMERA
-                        ) {
-                            cameraStreaming =
-                                state == PreviewView.StreamState.STREAMING
+                        if (expected == generation && mode == Mode.CAMERA) {
+                            cameraStreaming = state == PreviewView.StreamState.STREAMING
                         }
                     }
 
-                    provider.bindToLifecycle(
-                        owner,
-                        selector,
-                        preview
-                    )
+                    provider.bindToLifecycle(owner, selector, preview)
 
                 } catch (_: Exception) {
-                    if (
-                        expected == generation &&
-                        container != null
-                    ) {
+                    if (expected == generation && container != null) {
                         startPreview(useCamera = false)
                     }
                 }
             }, ContextCompat.getMainExecutor(context))
 
         } catch (_: Exception) {
-            if (
-                expected == generation &&
-                container != null
-            ) {
+            if (expected == generation && container != null) {
                 startPreview(useCamera = false)
             }
         }
@@ -671,11 +505,7 @@ class CameraFragment : Fragment() {
             while (isActive) {
                 delay(500L)
 
-                if (
-                    container == null ||
-                    expected != generation ||
-                    mode != Mode.CAMERA
-                ) {
+                if (container == null || expected != generation || mode != Mode.CAMERA) {
                     return@launch
                 }
 
@@ -683,8 +513,7 @@ class CameraFragment : Fragment() {
                 val elapsed = now - lastTime
                 lastTime = now
 
-                val resumed = viewLifecycleOwner.lifecycle
-                    .currentState.isAtLeast(Lifecycle.State.RESUMED)
+                val resumed = viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)
 
                 if (!resumed || cameraStreaming) {
                     withoutCameraMs = 0L
@@ -705,9 +534,7 @@ class CameraFragment : Fragment() {
         val location = modelLocation(currentModelFile)
 
         if (location == null) {
-            statusText?.text =
-                "Modelo não encontrado: $currentModelFile"
-
+            statusText?.text = "Modelo não encontrado: $currentModelFile"
             placeButton?.isEnabled = false
             return
         }
@@ -724,14 +551,9 @@ class CameraFragment : Fragment() {
 
         loadJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val instance =
-                    scene.modelLoader.loadModelInstance(location)
+                val instance = scene.modelLoader.loadModelInstance(location)
 
-                if (
-                    expected != generation ||
-                    expectedModel != modelGeneration ||
-                    sceneView !== scene
-                ) {
+                if (expected != generation || expectedModel != modelGeneration || sceneView !== scene) {
                     return@launch
                 }
 
@@ -757,12 +579,8 @@ class CameraFragment : Fragment() {
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                if (
-                    expected == generation &&
-                    expectedModel == modelGeneration
-                ) {
-                    statusText?.text =
-                        "Erro ao carregar: $fileName"
+                if (expected == generation && expectedModel == modelGeneration) {
+                    statusText?.text = "Erro ao carregar: $fileName"
                 }
             }
         }
@@ -791,41 +609,19 @@ class CameraFragment : Fragment() {
             anchorNode = anchor
             placementHit = null
 
-
-    private fun loadModel(fileName: String) {
-        try {
-            sceneView.removeChild(modelNode)
-        } catch (e: Exception) {
-
-        }
-
-        modelNode = ArModelNode(sceneView.engine, PlacementMode.INSTANT).apply {
-            loadModelGlbAsync(
-                glbFileLocation = getFilePath(requireContext(), fileName),
-                centerOrigin = Position(0f, 0f, 1f),
-
-                ) {
-                sceneView.planeRenderer.isVisible = true
-
-                // Tocar som quando o objetivo aparecer
-                mediaPlayer?.release()
-                mediaPlayer = MediaPlayer.create(
-                    requireContext(),
-                    R.raw.objetivo
-                )
-                mediaPlayer?.start()
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer.create(requireContext(), R.raw.objetivo)
+            mediaPlayer?.start()
 
             placeButton?.apply {
                 text = "Reposicionar"
                 isEnabled = true
-
             }
 
             statusText?.text = "Objeto posicionado no ambiente."
 
         } catch (_: Exception) {
-            statusText?.text =
-                "Não foi possível posicionar. Tente outra superfície."
+            statusText?.text = "Não foi possível posicionar. Tente outra superfície."
         }
     }
 
@@ -836,11 +632,10 @@ class CameraFragment : Fragment() {
             context.assets.open(fileName).use { }
             return fileName
         } catch (_: Exception) {
-            // Procura no armazenamento interno.
+            // Procura no armazenamento interno
         }
 
         val file = File(context.filesDir, fileName)
-
         return if (file.isFile) {
             Uri.fromFile(file).toString()
         } else {
@@ -877,21 +672,23 @@ class CameraFragment : Fragment() {
         }
     }
 
-
     private fun tirarFoto() {
+        val currentSceneView = sceneView ?: run {
+            Toast.makeText(requireContext(), "Cena não disponível", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val bitmap = Bitmap.createBitmap(
-            sceneView.width,
-            sceneView.height,
+            currentSceneView.width,
+            currentSceneView.height,
             Bitmap.Config.ARGB_8888
         )
 
         PixelCopy.request(
-            sceneView,
+            currentSceneView,
             bitmap,
             { result ->
-
                 if (result == PixelCopy.SUCCESS) {
-
                     val nomeArquivo = "AR_Decor_${System.currentTimeMillis()}.jpg"
 
                     val contentValues = ContentValues().apply {
@@ -903,10 +700,7 @@ class CameraFragment : Fragment() {
                                 MediaStore.Images.Media.RELATIVE_PATH,
                                 Environment.DIRECTORY_PICTURES + "/AR Decor"
                             )
-                            put(
-                                MediaStore.Images.Media.IS_PENDING,
-                                1
-                            )
+                            put(MediaStore.Images.Media.IS_PENDING, 1)
                         }
                     }
 
@@ -916,61 +710,29 @@ class CameraFragment : Fragment() {
                     )
 
                     if (uri != null) {
-
                         requireContext().contentResolver.openOutputStream(uri)?.use { outputStream ->
-                            bitmap.compress(
-                                Bitmap.CompressFormat.JPEG,
-                                95,
-                                outputStream
-                            )
+                            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
                         }
 
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             contentValues.clear()
-                            contentValues.put(
-                                MediaStore.Images.Media.IS_PENDING,
-                                0
-                            )
-
-                            requireContext().contentResolver.update(
-                                uri,
-                                contentValues,
-                                null,
-                                null
-                            )
+                            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
+                            requireContext().contentResolver.update(uri, contentValues, null, null)
                         }
 
-                        Toast.makeText(
-                            requireContext(),
-                            "Foto salva com sucesso!",
-                            Toast.LENGTH_SHORT
-                        ).show()
-
+                        Toast.makeText(requireContext(), "Foto salva com sucesso!", Toast.LENGTH_SHORT).show()
                     } else {
-
-                        Toast.makeText(
-                            requireContext(),
-                            "Não foi possível salvar a foto",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        Toast.makeText(requireContext(), "Não foi possível salvar a foto", Toast.LENGTH_SHORT).show()
                     }
-
                 } else {
-
-                    Toast.makeText(
-                        requireContext(),
-                        "Erro ao tirar foto",
-                        Toast.LENGTH_SHORT
-                    ).show()
+                    Toast.makeText(requireContext(), "Erro ao tirar foto", Toast.LENGTH_SHORT).show()
                 }
 
                 bitmap.recycle()
-
             },
             Handler(Looper.getMainLooper())
         )
     }
-}
 
     private fun clearScene() {
         generation++
@@ -1022,6 +784,9 @@ class CameraFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        mediaPlayer?.release()
+        mediaPlayer = null
+
         availabilityJob?.cancel()
         availabilityJob = null
 
@@ -1034,6 +799,7 @@ class CameraFragment : Fragment() {
         overlay = null
         statusText = null
         placeButton = null
+        photoButton = null
         container = null
 
         pendingAr = false
