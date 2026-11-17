@@ -74,6 +74,24 @@ class CameraFragment : Fragment() {
     private var container: FrameLayout? = null
     private var placeButton: ExtendedFloatingActionButton? = null
     private var photoButton: ExtendedFloatingActionButton? = null
+    // Elementos da interface do jogo
+    private var missionTitle: TextView? = null
+    private var missionObjective: TextView? = null
+    private var scoreText: TextView? = null
+    private var timerText: TextView? = null
+    private var completeButton: ExtendedFloatingActionButton? = null
+
+    // Sistema de pontuação
+    private var score = 0
+    private var remainingSeconds = 120
+
+    // Progresso da missão
+    private var objectPlaced = false
+    private var photoTaken = false
+    private var missionCompleted = false
+
+    // Cronômetro
+    private var timerJob: Job? = null
     private var statusText: TextView? = null
     private var overlay: View? = null
 
@@ -92,12 +110,20 @@ class CameraFragment : Fragment() {
     private var arWatchdogJob: Job? = null
     private var cameraWatchdogJob: Job? = null
 
+    private var gameOverPanel: View? = null
+
+    private var gameOverMessage: TextView? = null
+
+    private var finalScore: TextView? = null
+
     private var generation = 0
     private var modelGeneration = 0
     private var pendingAr = false
 
     private var arTracking = false
     private var cameraStreaming = false
+
+
 
     private var currentModelFile: String = "neutrofilo.glb"
 
@@ -128,11 +154,32 @@ class CameraFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        gameOverPanel = view.findViewById(R.id.gameOverPanel)
+        gameOverMessage = view.findViewById(R.id.gameOverMessage)
+        finalScore = view.findViewById(R.id.finalScore)
+
+        view.findViewById<View>(R.id.retryButton).setOnClickListener {
+            restartMission()
+        }
+
+        view.findViewById<View>(R.id.backButton).setOnClickListener {
+            gameOverPanel?.visibility = View.GONE
+        }
+
         container = view.findViewById(R.id.sceneContainer)
         placeButton = view.findViewById(R.id.place)
         photoButton = view.findViewById(R.id.photo)
 
+        missionTitle = view.findViewById(R.id.missionTitle)
+        missionObjective = view.findViewById(R.id.missionObjective)
+        scoreText = view.findViewById(R.id.scoreText)
+        timerText = view.findViewById(R.id.timerText)
+        completeButton = view.findViewById(R.id.completeMission)
+
         createControls()
+
+        updateGameUi()
+        startMissionTimer()
 
         sharedViewModel = ViewModelProvider(requireActivity())[SharedModelViewModel::class.java]
 
@@ -160,6 +207,10 @@ class CameraFragment : Fragment() {
 
         photoButton?.setOnClickListener {
             tirarFoto()
+        }
+
+        completeButton?.setOnClickListener {
+            finishMission()
         }
 
         checkAvailability()
@@ -218,6 +269,9 @@ class CameraFragment : Fragment() {
         overlay = layer
 
         parent.findViewById<View>(R.id.titleImage)?.bringToFront()
+        parent.findViewById<View>(R.id.missionPanel)?.bringToFront()
+
+        completeButton?.bringToFront()
         placeButton?.bringToFront()
         photoButton?.bringToFront()
     }
@@ -401,6 +455,8 @@ class CameraFragment : Fragment() {
 
     private fun startPreview(useCamera: Boolean) {
         val host = container ?: return
+
+
 
         clearScene()
         mode = if (useCamera) Mode.CAMERA else Mode.STATIC
@@ -586,6 +642,9 @@ class CameraFragment : Fragment() {
                 if (!isAr) {
                     scene.addChildNode(node)
                     placeButton?.isEnabled = true
+
+                    objectPlaced = true
+                    updateGameUi()
                 }
 
             } catch (e: CancellationException) {
@@ -620,6 +679,8 @@ class CameraFragment : Fragment() {
 
             anchorNode = anchor
             placementHit = null
+            objectPlaced = true
+            updateGameUi()
 
             mediaPlayer?.release()
             mediaPlayer = MediaPlayer.create(requireContext(), R.raw.objetivo)
@@ -684,9 +745,23 @@ class CameraFragment : Fragment() {
         }
     }
 
+
     private fun tirarFoto() {
         val currentSceneView = sceneView ?: run {
-            Toast.makeText(requireContext(), "Cena não disponível", Toast.LENGTH_SHORT).show()
+            Toast.makeText(
+                requireContext(),
+                "Câmera indisponível!",
+                Toast.LENGTH_SHORT
+            ).show()
+            return
+        }
+
+        if (currentSceneView.width <= 0 || currentSceneView.height <= 0) {
+            Toast.makeText(
+                requireContext(),
+                "Aguarde a câmera carregar.",
+                Toast.LENGTH_SHORT
+            ).show()
             return
         }
 
@@ -700,19 +775,30 @@ class CameraFragment : Fragment() {
             currentSceneView,
             bitmap,
             { result ->
+
                 if (result == PixelCopy.SUCCESS) {
-                    val nomeArquivo = "AR_Decor_${System.currentTimeMillis()}.jpg"
+                    val nomeArquivo =
+                        "AR_Decor_${System.currentTimeMillis()}.jpg"
 
                     val contentValues = ContentValues().apply {
-                        put(MediaStore.Images.Media.DISPLAY_NAME, nomeArquivo)
-                        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                        put(
+                            MediaStore.Images.Media.DISPLAY_NAME,
+                            nomeArquivo
+                        )
+                        put(
+                            MediaStore.Images.Media.MIME_TYPE,
+                            "image/jpeg"
+                        )
 
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                             put(
                                 MediaStore.Images.Media.RELATIVE_PATH,
                                 Environment.DIRECTORY_PICTURES + "/AR Decor"
                             )
-                            put(MediaStore.Images.Media.IS_PENDING, 1)
+                            put(
+                                MediaStore.Images.Media.IS_PENDING,
+                                1
+                            )
                         }
                     }
 
@@ -722,28 +808,220 @@ class CameraFragment : Fragment() {
                     )
 
                     if (uri != null) {
-                        requireContext().contentResolver.openOutputStream(uri)?.use { outputStream ->
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
+                        val fotoSalva = requireContext()
+                            .contentResolver
+                            .openOutputStream(uri)
+                            ?.use { outputStream ->
+                                bitmap.compress(
+                                    Bitmap.CompressFormat.JPEG,
+                                    95,
+                                    outputStream
+                                )
+                            } ?: false
+
+                        if (fotoSalva) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                val valoresAtualizados = ContentValues().apply {
+                                    put(
+                                        MediaStore.Images.Media.IS_PENDING,
+                                        0
+                                    )
+                                }
+
+                                requireContext().contentResolver.update(
+                                    uri,
+                                    valoresAtualizados,
+                                    null,
+                                    null
+                                )
+                            }
+
+                            // LIBERA A CONCLUSÃO DA MISSÃO
+                            photoTaken = true
+                            updateGameUi()
+
+                            Toast.makeText(
+                                requireContext(),
+                                "Foto salva! Agora você pode concluir a missão.",
+                                Toast.LENGTH_LONG
+                            ).show()
+
+                        } else {
+                            Toast.makeText(
+                                requireContext(),
+                                "Erro ao salvar a foto.",
+                                Toast.LENGTH_SHORT
+                            ).show()
                         }
 
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                            contentValues.clear()
-                            contentValues.put(MediaStore.Images.Media.IS_PENDING, 0)
-                            requireContext().contentResolver.update(uri, contentValues, null, null)
-                        }
-
-                        Toast.makeText(requireContext(), "Foto salva com sucesso!", Toast.LENGTH_SHORT).show()
                     } else {
-                        Toast.makeText(requireContext(), "Não foi possível salvar a foto", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            requireContext(),
+                            "Não foi possível salvar a foto.",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
+
                 } else {
-                    Toast.makeText(requireContext(), "Erro ao tirar foto", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        requireContext(),
+                        "Erro ao tirar foto.",
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
 
                 bitmap.recycle()
             },
             Handler(Looper.getMainLooper())
         )
+    }
+
+
+
+    // Atualiza as informações exibidas na tela
+    private fun updateGameUi() {
+
+        scoreText?.text = "Pontos: $score"
+
+        val minutes = remainingSeconds / 60
+        val seconds = remainingSeconds % 60
+
+        timerText?.text = String.format(
+            "Tempo: %02d:%02d",
+            minutes,
+            seconds
+        )
+
+        completeButton?.isEnabled =
+            objectPlaced && photoTaken && !missionCompleted
+    }
+
+    // Inicia o cronômetro da missão
+    private fun startMissionTimer() {
+
+        timerJob?.cancel()
+
+        timerJob = viewLifecycleOwner.lifecycleScope.launch {
+
+            while (
+                remainingSeconds > 0 &&
+                isActive &&
+                !missionCompleted
+            ) {
+                delay(1000L)
+
+                remainingSeconds--
+
+                updateGameUi()
+            }
+
+            if (!missionCompleted && remainingSeconds == 0) {
+                showGameOver()
+            }
+        }
+    }
+
+    private fun restartMission() {
+
+        timerJob?.cancel()
+
+        score = 0
+        remainingSeconds = 120
+
+        objectPlaced = false
+        photoTaken = false
+        missionCompleted = false
+
+        gameOverPanel?.visibility = View.GONE
+
+        missionTitle?.text = "MISSÃO 1 - DECORE SUA SALA"
+
+        missionObjective?.text =
+            "Posicione um objeto 3D e tire uma foto."
+
+        completeButton?.text = "Concluir missão"
+        completeButton?.isEnabled = false
+
+        photoButton?.isEnabled = true
+
+        removeModel()
+
+        updateGameUi()
+
+        if (mode == Mode.AR) {
+            placeButton?.text = "Posicionar"
+            placeButton?.isEnabled = false
+            statusText?.text =
+                "Mova o aparelho para encontrar uma superfície."
+        } else {
+            loadModel()
+        }
+
+        startMissionTimer()
+    }
+
+    // Finaliza a missão e calcula os pontos
+    private fun finishMission() {
+
+        if (!objectPlaced || !photoTaken || missionCompleted) {
+            Toast.makeText(
+                requireContext(),
+                "Posicione o objeto e tire uma foto primeiro!",
+                Toast.LENGTH_SHORT
+            ).show()
+
+            return
+        }
+
+        if (remainingSeconds <= 0) {
+            return
+        }
+
+        missionCompleted = true
+
+        // 100 pontos pela missão
+        // Bônus de acordo com o tempo restante
+        val bonus = remainingSeconds / 2
+
+        score += 100 + bonus
+
+        timerJob?.cancel()
+
+        missionTitle?.text = "MISSÃO 1 CONCLUÍDA!"
+
+        missionObjective?.text =
+            "Parabéns! Você completou o desafio de decoração!"
+
+        completeButton?.text = "Missão concluída"
+        completeButton?.isEnabled = false
+
+        updateGameUi()
+
+        Toast.makeText(
+            requireContext(),
+            "Parabéns! Você ganhou ${100 + bonus} pontos!",
+            Toast.LENGTH_LONG
+        ).show()
+
+    }
+
+    private fun showGameOver() {
+
+        missionCompleted = false
+
+        timerJob?.cancel()
+
+        gameOverMessage?.text = "O tempo acabou! Você perdeu."
+        finalScore?.text = "Pontuação: $score"
+
+        gameOverPanel?.visibility = View.VISIBLE
+        gameOverPanel?.bringToFront()
+
+        placeButton?.isEnabled = false
+        photoButton?.isEnabled = false
+        completeButton?.isEnabled = false
+
+        statusText?.text = "Fim de jogo!"
     }
 
     private fun clearScene() {
@@ -801,6 +1079,10 @@ class CameraFragment : Fragment() {
 
         availabilityJob?.cancel()
         availabilityJob = null
+        timerJob?.cancel()
+        timerJob = null
+
+
 
         clearScene()
 
@@ -813,6 +1095,14 @@ class CameraFragment : Fragment() {
         placeButton = null
         photoButton = null
         container = null
+        missionTitle = null
+        missionObjective = null
+        scoreText = null
+        timerText = null
+        completeButton = null
+        gameOverPanel = null
+        gameOverMessage = null
+        finalScore = null
 
         pendingAr = false
         mode = Mode.CHECKING

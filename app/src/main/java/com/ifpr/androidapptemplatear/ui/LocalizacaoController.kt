@@ -76,6 +76,13 @@ class LocalizacaoController(
             latitude = -25.246243,
             longitude = -50.021782
         )
+                // Terminal Central
+        Lugar(
+            latitude = -25.0941846,
+            longitude = -50.1582051
+    )
+
+        )
     )
 
     private var manager: LocationManager? = null
