@@ -62,26 +62,25 @@ class LocalizacaoController(
         // Catedral Sant'Ana
         Lugar(
             latitude = -25.097922,
-            longitude = -50.159264
+            longitude = -25.159264
         ),
 
         // Igreja dos Polacos
         Lugar(
             latitude = -25.094904,
-            longitude = -50.163075
+            longitude = -25.163075
         ),
 
         // Parque Estadual de Vila Velha
         Lugar(
             latitude = -25.246243,
             longitude = -50.021782
-        )
-                // Terminal Central
+        ),
+
+        // Terminal Central
         Lugar(
             latitude = -25.0941846,
             longitude = -50.1582051
-    )
-
         )
     )
 
